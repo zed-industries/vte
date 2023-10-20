@@ -368,6 +368,17 @@ impl<T: Timeout> Processor<T> {
             self.stop_sync(handler);
         }
     }
+
+    fn serialize(&self) -> () {
+        todo!()
+    }
+
+    fn catch_up<H>(&mut self, data: (), handler: &mut H)
+    where
+        H: Handler,
+    {
+        todo!()
+    }
 }
 
 /// Helper type that implements `crate::Perform`.
@@ -1853,6 +1864,7 @@ pub mod C0 {
 // Byte sequences used in these tests are recording of pty stdout.
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     #[derive(Default)]
@@ -1875,6 +1887,7 @@ mod tests {
         }
     }
 
+    #[derive(Debug, PartialEq, Eq)]
     struct MockHandler {
         index: CharsetIndex,
         charset: StandardCharset,
@@ -2198,5 +2211,70 @@ mod tests {
         let rgb1 = Rgb { r: 0x12, g: 0x34, b: 0x56 };
         let rgb2 = Rgb { r: 0xfe, g: 0xdc, b: 0xba };
         assert!((rgb1.contrast(rgb2) - 9.786_558_997_257_74).abs() < f64::EPSILON);
+    }
+
+    // #[test]
+    // fn test_serialize_and_restore_parser() {
+    //     // Data is from the `parse_osc_with_utf8_arguments` test
+    //     static INPUT: &[u8] = &[
+    //         0x0d, 0x1b, 0x5d, 0x32, 0x3b, 0x65, 0x63, 0x68, 0x6f, 0x20, 0x27, 0xc2, 0xaf, 0x5c,
+    //         0x5f, 0x28, 0xe3, 0x83, 0x84, 0x29, 0x5f, 0x2f, 0xc2, 0xaf, 0x27, 0x20, 0x26, 0x26,
+    //         0x20, 0x73, 0x6c, 0x65, 0x65, 0x70, 0x20, 0x31, 0x07,
+    //     ];
+    //     let mut dispatcher = Dispatcher::default();
+    //     // CREATE A PARSER
+    //     let mut parser = Parser::new();
+
+    //     // PARSE HALF WAY THROUGH
+    //     for byte in &INPUT[0..INPUT.len() / 2] {
+    //         parser.advance(&mut dispatcher, *byte);
+    //     }
+
+    //     // CREATE A NEW PARSER FROM DATA
+    //     let mut parser_2 = Parser::new_from_state(&parser);
+
+    //     let mut dispatcher_2 = Dispatcher::default();
+
+    //     // KEEP PARSING BOTH
+    //     for byte in &INPUT[INPUT.len() / 2..] {
+    //         parser.advance(&mut dispatcher, *byte);
+    //         parser_2.advance(&mut dispatcher_2, *byte);
+    //     }
+
+    //     // ASSERT EVERYTHING IS THE SAME BY THE END
+    //     assert_eq!(dispatcher.dispatched, dispatcher_2.dispatched);
+    //     assert_eq!(dispatcher.dispatched.len(), 1);
+    //     panic!();
+    // }
+
+    #[test]
+    fn test_serialize_and_restore_processor() {
+        // These bytes are from `parse_truecolor_attr` for now
+        static BYTES: &[u8] = &[
+            0x1b, b'[', b'3', b'8', b';', b'2', b';', b'1', b'2', b'8', b';', b'6', b'6', b';',
+            b'2', b'5', b'5', b'm',
+        ];
+
+        let mut parser = Processor::<TestSyncHandler>::new();
+        let mut handler = MockHandler::default();
+
+        // Parse half way through a sequence
+        for byte in &BYTES[0..BYTES.len() / 2] {
+            parser.advance(&mut handler, *byte);
+        }
+
+        // TODO: Make a copy of it
+        let mut parser_2 = Processor::<TestSyncHandler>::new();
+        let mut handler_2 = MockHandler::default();
+        let data = parser.serialize();
+        parser_2.catch_up(data, handler_2);
+
+        // Parse the rest of the sequence
+        for byte in &BYTES[BYTES.len() / 2..] {
+            parser.advance(&mut handler, *byte);
+            parser_2.advance(&mut handler_2, *byte);
+        }
+
+        assert_eq!(handler, handler_2);
     }
 }
