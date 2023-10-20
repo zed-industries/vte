@@ -74,7 +74,7 @@ impl<'a, P: Perform> utf8::Receiver for VtUtf8Receiver<'a, P> {
 ///
 /// Generic over the value for the size of the raw Operating System Command
 /// buffer. Only used when the `no_std` feature is enabled.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Parser<const OSC_RAW_BUF_SIZE: usize = MAX_OSC_RAW> {
     state: State,
     intermediates: [u8; MAX_INTERMEDIATES],

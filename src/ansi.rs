@@ -287,6 +287,10 @@ pub struct Processor<T: Timeout> {
     parser: crate::Parser,
 }
 
+struct SerializedProcessorState {
+    parser: crate::Parser,
+}
+
 impl<T: Timeout> Processor<T> {
     #[inline]
     pub fn new() -> Self {
@@ -369,15 +373,13 @@ impl<T: Timeout> Processor<T> {
         }
     }
 
-    fn serialize(&self) -> () {
-        todo!()
+    fn serialize(&self) -> SerializedProcessorState {
+        SerializedProcessorState { parser: self.parser.clone() }
     }
 
-    fn catch_up<H>(&mut self, data: (), handler: &mut H)
-    where
-        H: Handler,
-    {
-        todo!()
+    /// Overwrites this parser with the given serialized state
+    fn deserialize(state: SerializedProcessorState) -> Self {
+        Self { state: Default::default(), parser: state.parser }
     }
 }
 
@@ -1047,7 +1049,7 @@ pub enum Color {
 }
 
 /// Terminal character attributes.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Attr {
     /// Clear all special abilities.
     Reset,
@@ -1887,7 +1889,7 @@ mod tests {
         }
     }
 
-    #[derive(Debug, PartialEq, Eq)]
+    #[derive(Debug, PartialEq, Eq, Clone)]
     struct MockHandler {
         index: CharsetIndex,
         charset: StandardCharset,
@@ -2213,68 +2215,61 @@ mod tests {
         assert!((rgb1.contrast(rgb2) - 9.786_558_997_257_74).abs() < f64::EPSILON);
     }
 
-    // #[test]
-    // fn test_serialize_and_restore_parser() {
-    //     // Data is from the `parse_osc_with_utf8_arguments` test
-    //     static INPUT: &[u8] = &[
-    //         0x0d, 0x1b, 0x5d, 0x32, 0x3b, 0x65, 0x63, 0x68, 0x6f, 0x20, 0x27, 0xc2, 0xaf, 0x5c,
-    //         0x5f, 0x28, 0xe3, 0x83, 0x84, 0x29, 0x5f, 0x2f, 0xc2, 0xaf, 0x27, 0x20, 0x26, 0x26,
-    //         0x20, 0x73, 0x6c, 0x65, 0x65, 0x70, 0x20, 0x31, 0x07,
-    //     ];
-    //     let mut dispatcher = Dispatcher::default();
-    //     // CREATE A PARSER
-    //     let mut parser = Parser::new();
-
-    //     // PARSE HALF WAY THROUGH
-    //     for byte in &INPUT[0..INPUT.len() / 2] {
-    //         parser.advance(&mut dispatcher, *byte);
-    //     }
-
-    //     // CREATE A NEW PARSER FROM DATA
-    //     let mut parser_2 = Parser::new_from_state(&parser);
-
-    //     let mut dispatcher_2 = Dispatcher::default();
-
-    //     // KEEP PARSING BOTH
-    //     for byte in &INPUT[INPUT.len() / 2..] {
-    //         parser.advance(&mut dispatcher, *byte);
-    //         parser_2.advance(&mut dispatcher_2, *byte);
-    //     }
-
-    //     // ASSERT EVERYTHING IS THE SAME BY THE END
-    //     assert_eq!(dispatcher.dispatched, dispatcher_2.dispatched);
-    //     assert_eq!(dispatcher.dispatched.len(), 1);
-    //     panic!();
-    // }
-
     #[test]
     fn test_serialize_and_restore_processor() {
-        // These bytes are from `parse_truecolor_attr` for now
-        static BYTES: &[u8] = &[
-            0x1b, b'[', b'3', b'8', b';', b'2', b';', b'1', b'2', b'8', b';', b'6', b'6', b';',
-            b'2', b'5', b'5', b'm',
-        ];
+        #[derive(Default)]
+        pub struct MaybePendingTestSyncHandler(bool);
 
-        let mut parser = Processor::<TestSyncHandler>::new();
+        impl Timeout for MaybePendingTestSyncHandler {
+            #[inline]
+            fn set_timeout(&mut self, _: Duration) {
+                self.0 = true;
+            }
+
+            #[inline]
+            fn clear_timeout(&mut self) {
+                self.0 = false;
+            }
+
+            #[inline]
+            fn pending_timeout(&self) -> bool {
+                self.0
+            }
+        }
+
+        // ✅ 1. Make a slightly more complicated TestSyncHandler, that allows us to set and fire timeouts
+        // ✅ 2. Find a thing that exercises that code path
+        // ✅ 3. Create a situation where we serialize the world in the middle of that timeout
+        // ✅ 4. Fire the timeout,
+        // 5. Actually correctly work everything
+        // 6. Start testing the manually dispatched timeout stuff.
+        //  ->
+
+        // These bytes are from `parse_osc4_set_color`, with a CSI sync sequence at the end
+        let bytes: &[u8] = b"\x1b]4;0;#fff\x1b\\ \x1b[?2026l";
+
+        let mut parser = Processor::<MaybePendingTestSyncHandler>::new();
         let mut handler = MockHandler::default();
+        parser.state.sync_state.timeout.set_timeout(Duration::from_secs(1));
 
         // Parse half way through a sequence
-        for byte in &BYTES[0..BYTES.len() / 2] {
+        for byte in &bytes[0..(bytes.len() / 2)] {
             parser.advance(&mut handler, *byte);
         }
 
-        // TODO: Make a copy of it
-        let mut parser_2 = Processor::<TestSyncHandler>::new();
-        let mut handler_2 = MockHandler::default();
-        let data = parser.serialize();
-        parser_2.catch_up(data, handler_2);
+        // Make a copy of it
+        let mut handler_2 = handler.clone();
+        let mut parser_2 =
+            Processor::<MaybePendingTestSyncHandler>::deserialize(parser.serialize());
 
         // Parse the rest of the sequence
-        for byte in &BYTES[BYTES.len() / 2..] {
+        for byte in &bytes[(bytes.len() / 2)..] {
             parser.advance(&mut handler, *byte);
             parser_2.advance(&mut handler_2, *byte);
         }
 
+        assert_eq!(handler.color, Some(Rgb { r: 0xf0, g: 0xf0, b: 0xf0 }));
+        assert_eq!(handler_2.color, Some(Rgb { r: 0xf0, g: 0xf0, b: 0xf0 }));
         assert_eq!(handler, handler_2);
     }
 }
