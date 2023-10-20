@@ -13,6 +13,7 @@ name = "vte"
 edition = "2021"
 rust-version = "1.62.1"
 
+
 [dependencies]
 arrayvec = { version = "0.7.2", default-features = false, optional = true }
 bitflags = { version = "2.3.3", default-features = false, optional = true }
@@ -27,7 +28,7 @@ ansi = ["log", "cursor-icon", "bitflags"]
 default = ["no_std"]
 nightly = ["utf8parse/nightly"]
 no_std = ["arrayvec"]
-serde = ["dep:serde"]
+serde = ["dep:serde", "utf8parse/serde"]
 
 [workspace]
 members = ["utf8parse", "vte_generate_state_changes"]
