@@ -1,7 +1,11 @@
 use core::mem;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 #[allow(dead_code)]
 #[derive(Debug, Default, Copy, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum State {
     Anywhere = 0,
     CsiEntry = 1,

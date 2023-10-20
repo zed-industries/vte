@@ -27,6 +27,7 @@ pub enum Action {
 /// the following bytes are subject to different conditions than a tail byte.
 #[allow(non_camel_case_types)]
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum State {
     /// Ground state; expect anything
     #[default]

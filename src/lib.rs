@@ -38,6 +38,7 @@ use core::mem::MaybeUninit;
 
 #[cfg(feature = "no_std")]
 use arrayvec::ArrayVec;
+
 use utf8parse as utf8;
 
 mod definitions;
@@ -46,6 +47,7 @@ mod table;
 
 #[cfg(feature = "ansi")]
 pub mod ansi;
+
 pub use params::{Params, ParamsIter};
 
 use definitions::{unpack, Action, State};
@@ -75,6 +77,10 @@ impl<'a, P: Perform> utf8::Receiver for VtUtf8Receiver<'a, P> {
 /// Generic over the value for the size of the raw Operating System Command
 /// buffer. Only used when the `no_std` feature is enabled.
 #[derive(Default, Clone)]
+#[cfg_attr(
+    all(feature = "serde", not(feature = "no_std")),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct Parser<const OSC_RAW_BUF_SIZE: usize = MAX_OSC_RAW> {
     state: State,
     intermediates: [u8; MAX_INTERMEDIATES],

@@ -248,6 +248,7 @@ fn parse_number(input: &[u8]) -> Option<u8> {
 
 /// Internal state for VTE processor.
 #[derive(Debug, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 struct ProcessorState<T: Timeout> {
     /// Last processed character for repetition.
     preceding_char: Option<char>,
@@ -257,6 +258,7 @@ struct ProcessorState<T: Timeout> {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 struct SyncState<T: Timeout> {
     /// Handler for synchronized updates.
     timeout: T,
@@ -274,6 +276,7 @@ impl<T: Timeout> Default for SyncState<T> {
 /// The processor wraps a `crate::Parser` to ultimately call methods on a Handler.
 #[cfg(not(feature = "no_std"))]
 #[derive(Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Processor<T: Timeout = StdSyncHandler> {
     state: ProcessorState<T>,
     parser: crate::Parser,
@@ -285,18 +288,6 @@ pub struct Processor<T: Timeout = StdSyncHandler> {
 pub struct Processor<T: Timeout> {
     state: ProcessorState<T>,
     parser: crate::Parser,
-}
-
-struct SerializedSyncState {
-    // TODO: Think harder about this
-    timeout_active: bool,
-    buffer: Vec<u8>,
-}
-
-struct SerializedProcessorState {
-    parser: crate::Parser,
-    preceding_char: Option<char>,
-    sync_state: SerializedSyncState,
 }
 
 impl<T: Timeout> Processor<T> {
@@ -378,49 +369,6 @@ impl<T: Timeout> Processor<T> {
             self.state.sync_state.timeout.set_timeout(SYNC_UPDATE_TIMEOUT);
         } else if end == ESU_CSI || len >= SYNC_BUFFER_SIZE - 1 {
             self.stop_sync(handler);
-        }
-    }
-
-    fn serialize(&self) -> SerializedProcessorState {
-        SerializedProcessorState {
-            parser: self.parser.clone(),
-            preceding_char: self.state.preceding_char,
-            sync_state: SerializedSyncState {
-                timeout_active: self.state.sync_state.timeout.pending_timeout(),
-                buffer: self.state.sync_state.buffer.clone(),
-            },
-        }
-    }
-}
-
-#[derive(Default)]
-struct SynchronizedTimeout(bool);
-
-impl Timeout for SynchronizedTimeout {
-    fn set_timeout(&mut self, _: Duration) {
-        self.0 = true;
-    }
-
-    fn clear_timeout(&mut self) {
-        self.0 = false;
-    }
-
-    fn pending_timeout(&self) -> bool {
-        self.0
-    }
-}
-
-impl Processor<SynchronizedTimeout> {
-    fn deserialize(state: SerializedProcessorState) -> Self {
-        Self {
-            state: ProcessorState {
-                preceding_char: state.preceding_char,
-                sync_state: SyncState {
-                    timeout: SynchronizedTimeout(state.sync_state.timeout_active),
-                    buffer: state.sync_state.buffer,
-                },
-            },
-            parser: state.parser,
         }
     }
 }
@@ -2255,71 +2203,5 @@ mod tests {
         let rgb1 = Rgb { r: 0x12, g: 0x34, b: 0x56 };
         let rgb2 = Rgb { r: 0xfe, g: 0xdc, b: 0xba };
         assert!((rgb1.contrast(rgb2) - 9.786_558_997_257_74).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn test_serialize_and_restore_processor() {
-        #[derive(Default)]
-        pub struct MaybePendingTestSyncHandler(bool);
-
-        impl Timeout for MaybePendingTestSyncHandler {
-            #[inline]
-            fn set_timeout(&mut self, _: Duration) {
-                self.0 = true;
-            }
-
-            #[inline]
-            fn clear_timeout(&mut self) {
-                self.0 = false;
-            }
-
-            #[inline]
-            fn pending_timeout(&self) -> bool {
-                self.0
-            }
-        }
-
-        // ✅ 1. Make a slightly more complicated TestSyncHandler, that allows us to set and fire timeouts
-        // ✅ 2. Find a thing that exercises that code path
-        // ✅ 3. Create a situation where we serialize the world in the middle of that timeout
-        // ✅ 4. Fire the timeout,
-        // ✅ 5. Actually correctly work everything
-        // 6. Start testing the manually dispatched timeout stuff.
-        //  ->
-
-        // These bytes are from `parse_osc4_set_color`, with a CSI sync sequence at the end
-        let bytes: &[u8] = b"\x1b[?2026h  \x1b]4;0;#fff\x1b\\";
-        assert!(bytes.len() % 2 == 0);
-
-        let mut parser = Processor::<MaybePendingTestSyncHandler>::new();
-        let mut handler = MockHandler::default();
-
-        // Parse half way through a sequence
-        for byte in &bytes[0..(bytes.len() / 2)] {
-            parser.advance(&mut handler, *byte);
-        }
-
-        // Make a copy of it
-        let mut handler_2 = handler.clone();
-        let mut parser_2 = Processor::deserialize(parser.serialize());
-
-        // Parse the rest of the sequence
-        for (ix, byte) in bytes[(bytes.len() / 2)..].iter().enumerate() {
-            if ix == bytes.len() / 2 / 2 {
-                parser.stop_sync(&mut handler);
-                parser_2.stop_sync(&mut handler_2);
-            }
-
-            parser.advance(&mut handler, *byte);
-            parser_2.advance(&mut handler_2, *byte);
-        }
-
-        // 1. Expose whether there was a timeout or not in this parser step
-        // 2. Transport that information over to the other parser
-        // 3. Manually set the state on the other parser as we go
-
-        assert_eq!(handler.color, Some(Rgb { r: 0xf0, g: 0xf0, b: 0xf0 }));
-        assert_eq!(handler_2.color, Some(Rgb { r: 0xf0, g: 0xf0, b: 0xf0 }));
-        assert_eq!(handler, handler_2);
     }
 }

@@ -5,6 +5,7 @@ use core::fmt::{self, Debug, Formatter};
 pub(crate) const MAX_PARAMS: usize = 32;
 
 #[derive(Default, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Params {
     /// Number of subparameters for each parameter.
     ///

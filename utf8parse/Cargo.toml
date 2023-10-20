@@ -10,6 +10,10 @@ version = "0.2.1"
 name = "utf8parse"
 edition = "2018"
 
+[dependencies]
+serde = { version = "1.0.160", default-features = false, features = ["derive"], optional = true }
+
 [features]
+serde = ["dep:serde"]
 nightly = []
 default = []

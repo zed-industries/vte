@@ -26,6 +26,7 @@ pub trait Receiver {
 ///
 /// Repeatedly call `advance` with bytes to emit Utf8 characters
 #[derive(Clone, Default, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Parser {
     point: u32,
     state: State,
