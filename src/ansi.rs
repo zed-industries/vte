@@ -680,6 +680,9 @@ pub trait Handler {
 
     // Set SCP control.
     fn set_scp(&mut self, _char_path: ScpCharPath, _update_mode: ScpUpdateMode) {}
+
+    /// Handle OSC133 commands.
+    fn handle_osc133(&mut self, command: Osc133Command) {}
 }
 
 bitflags! {
@@ -1224,6 +1227,17 @@ pub enum ScpUpdateMode {
     PresentationToData,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Osc133Command {
+    FreshLine,
+    StartCommand,
+    StartPrompt,
+    EndPromptStartInput,
+    EndPromptStartInputEol,
+    EndInput,
+    EndCommand,
+}
+
 impl<'a, H, T> crate::Perform for Performer<'a, H, T>
 where
     H: Handler + 'a,
@@ -1462,6 +1476,26 @@ where
 
             // Reset text cursor color.
             b"112" => self.handler.reset_color(NamedColor::Cursor as usize),
+
+            // Handle OSC133 commands
+            b"133" => {
+                if params.len() < 2 {
+                    return unhandled(params);
+                }
+
+                let command = match params[1] {
+                    b"0" => Osc133Command::FreshLine,
+                    b"A" => Osc133Command::StartCommand,
+                    b"B" => Osc133Command::StartPrompt,
+                    b"C" => Osc133Command::EndPromptStartInput,
+                    b"D" => Osc133Command::EndPromptStartInputEol,
+                    b"E" => Osc133Command::EndInput,
+                    b"F" => Osc133Command::EndCommand,
+                    _ => return unhandled(params),
+                };
+
+                self.handler.handle_osc133(command);
+            },
 
             _ => unhandled(params),
         }
@@ -2015,6 +2049,33 @@ mod tests {
 
         fn reset_color(&mut self, index: usize) {
             self.reset_colors.push(index)
+        }
+
+        /// Handle OSC133 commands.
+        fn handle_osc133(&mut self, command: Osc133Command) {
+            match command {
+                Osc133Command::FreshLine => {
+                    // Handle fresh line
+                }
+                Osc133Command::StartCommand => {
+                    // Handle start command
+                }
+                Osc133Command::StartPrompt => {
+                    // Handle start prompt
+                }
+                Osc133Command::EndPromptStartInput => {
+                    // Handle end prompt and start input
+                }
+                Osc133Command::EndPromptStartInputEol => {
+                    // Handle end prompt and start input at end of line
+                }
+                Osc133Command::EndInput => {
+                    // Handle end input
+                }
+                Osc133Command::EndCommand => {
+                    // Handle end command
+                }
+            }
         }
     }
 
