@@ -1254,10 +1254,10 @@ pub enum FinalTermPromptKind {
 impl FinalTermPromptKind {
     // https://gitlab.freedesktop.org/Per_Bothner/specifications/blob/master/proposals/semantic-prompts.md
     //
-    // The k (kind) option specifies the type of prompt:
+    // "The k (kind) option specifies the type of prompt:
     // regular primary prompt (k=i or default),
     // right-side prompts (k=r),
-    // or prompts for continuation lines (k=c or k=s).
+    // or prompts for continuation lines (k=c or k=s)."
     fn try_from_str(s: &str) -> Option<Self> {
         match s {
             "i" => Some(Self::Initial),
@@ -1565,13 +1565,12 @@ where
                     },
                     b"C" => Osc133Command::MarkEndOfInputAndStartOfOutput { aid },
                     b"D" => {
-                        let status = match params.get(2).map(|&p| p) {
-                            Some(s) => match str::from_utf8(s) {
-                                Ok(s) => s.parse().unwrap_or(0),
-                                _ => 0,
-                            },
-                            _ => 0,
-                        };
+                        let status = params
+                            .get(2)
+                            .and_then(|s| str::from_utf8(&s).ok())
+                            .and_then(|s| s.parse::<i32>().ok())
+                            .unwrap_or(0);
+
                         Osc133Command::CommandStatus { status, aid }
                     },
                     b"N" => Osc133Command::MarkEndOfCommandWithFreshLine {
