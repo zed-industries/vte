@@ -680,6 +680,9 @@ pub trait Handler {
 
     // Set SCP control.
     fn set_scp(&mut self, _char_path: ScpCharPath, _update_mode: ScpUpdateMode) {}
+
+    /// Handle OSC133 commands.
+    fn handle_osc133(&mut self, _: Osc133Command) {}
 }
 
 bitflags! {
@@ -1224,6 +1227,68 @@ pub enum ScpUpdateMode {
     PresentationToData,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Osc133Command {
+    FreshLine,
+    FreshLineAndStartPrompt { aid: Option<String>, cl: Option<FinalTermClick> },
+
+    MarkEndOfCommandWithFreshLine { aid: Option<String>, cl: Option<FinalTermClick> },
+    StartPrompt(FinalTermPromptKind),
+
+    MarkEndOfPromptAndStartOfInputUntilNextMarker,
+    MarkEndOfPromptAndStartOfInputUntilEndOfLine,
+
+    MarkEndOfInputAndStartOfOutput { aid: Option<String> },
+    CommandStatus { status: i32, aid: Option<String> },
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub enum FinalTermPromptKind {
+    #[default]
+    Initial,
+    RightSide,
+    Continuation,
+    Secondary,
+}
+
+impl FinalTermPromptKind {
+    // https://gitlab.freedesktop.org/Per_Bothner/specifications/blob/master/proposals/semantic-prompts.md
+    //
+    // "The k (kind) option specifies the type of prompt:
+    // regular primary prompt (k=i or default),
+    // right-side prompts (k=r),
+    // or prompts for continuation lines (k=c or k=s)."
+    fn try_from_str(s: &str) -> Option<Self> {
+        match s {
+            "i" => Some(Self::Initial),
+            "r" => Some(Self::RightSide),
+            "c" => Some(Self::Continuation),
+            "s" => Some(Self::Secondary),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FinalTermClick {
+    Line,
+    MultipleLine,
+    ConservativeVertical,
+    SmartVertical,
+}
+
+impl FinalTermClick {
+    fn try_from_str(s: &str) -> Option<Self> {
+        match s {
+            "line" => Some(Self::Line),
+            "m" => Some(Self::MultipleLine),
+            "v" => Some(Self::ConservativeVertical),
+            "w" => Some(Self::SmartVertical),
+            _ => None,
+        }
+    }
+}
+
 impl<'a, H, T> crate::Perform for Performer<'a, H, T>
 where
     H: Handler + 'a,
@@ -1462,6 +1527,65 @@ where
 
             // Reset text cursor color.
             b"112" => self.handler.reset_color(NamedColor::Cursor as usize),
+
+            // Handle OSC133 commands
+            b"133" => {
+                if params.len() < 2 {
+                    return unhandled(params);
+                }
+
+                let mut aid = None;
+                let mut cl = None;
+                let mut kind = None;
+
+                let params_offset = if params[1] == b"D" { 3 } else { 2 };
+                for s in params.iter().skip(params_offset) {
+                    if let Some(equal) = s.iter().position(|c| *c == b'=') {
+                        let key = &s[..equal];
+                        let value = &s[equal + 1..];
+
+                        match (str::from_utf8(key), str::from_utf8(value)) {
+                            (Ok("aid"), Ok(value)) => aid = Some(value.to_owned()),
+                            (Ok("cl"), Ok(value)) => cl = Some(value.to_owned()),
+                            (Ok("k"), Ok(value)) => kind = Some(value.to_owned()),
+                            _ => {},
+                        };
+                    } else if !s.is_empty() {
+                        return unhandled(params);
+                    }
+                }
+
+                let command = match params[1] {
+                    b"L" => Osc133Command::FreshLine,
+                    b"B" => Osc133Command::MarkEndOfPromptAndStartOfInputUntilNextMarker,
+                    b"I" => Osc133Command::MarkEndOfPromptAndStartOfInputUntilEndOfLine,
+                    b"A" => Osc133Command::FreshLineAndStartPrompt {
+                        aid,
+                        cl: cl.and_then(|s| FinalTermClick::try_from_str(&s)),
+                    },
+                    b"C" => Osc133Command::MarkEndOfInputAndStartOfOutput { aid },
+                    b"D" => {
+                        let status = params
+                            .get(2)
+                            .and_then(|s| str::from_utf8(&s).ok())
+                            .and_then(|s| s.parse::<i32>().ok())
+                            .unwrap_or(0);
+
+                        Osc133Command::CommandStatus { status, aid }
+                    },
+                    b"N" => Osc133Command::MarkEndOfCommandWithFreshLine {
+                        aid,
+                        cl: cl.and_then(|s| FinalTermClick::try_from_str(&s)),
+                    },
+                    b"P" => Osc133Command::StartPrompt(
+                        kind.and_then(|s| FinalTermPromptKind::try_from_str(&s))
+                            .unwrap_or_default(),
+                    ),
+                    _ => return unhandled(params),
+                };
+
+                self.handler.handle_osc133(command);
+            },
 
             _ => unhandled(params),
         }
@@ -2015,6 +2139,19 @@ mod tests {
 
         fn reset_color(&mut self, index: usize) {
             self.reset_colors.push(index)
+        }
+
+        fn handle_osc133(&mut self, command: Osc133Command) {
+            match command {
+                Osc133Command::FreshLine => {},
+                Osc133Command::FreshLineAndStartPrompt { aid: _, cl: _ } => {},
+                Osc133Command::MarkEndOfCommandWithFreshLine { aid: _, cl: _ } => {},
+                Osc133Command::StartPrompt(_) => {},
+                Osc133Command::MarkEndOfPromptAndStartOfInputUntilNextMarker => {},
+                Osc133Command::MarkEndOfPromptAndStartOfInputUntilEndOfLine => {},
+                Osc133Command::MarkEndOfInputAndStartOfOutput { aid: _ } => {},
+                Osc133Command::CommandStatus { status: _, aid: _ } => {},
+            }
         }
     }
 
