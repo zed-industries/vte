@@ -24,6 +24,8 @@ use core::{iter, str};
 use core::ops::Mul;
 
 #[cfg(not(feature = "no_std"))]
+use std::collections::HashMap;
+#[cfg(not(feature = "no_std"))]
 use std::time::Instant;
 
 use cursor_icon::CursorIcon;
@@ -682,7 +684,7 @@ pub trait Handler {
     fn set_scp(&mut self, _char_path: ScpCharPath, _update_mode: ScpUpdateMode) {}
 
     /// Handle OSC133 commands.
-    fn handle_osc133(&mut self, command: Osc133Command) {}
+    fn handle_osc133(&mut self, _: Osc133Command) {}
 }
 
 bitflags! {
@@ -1227,15 +1229,66 @@ pub enum ScpUpdateMode {
     PresentationToData,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Osc133Command {
     FreshLine,
-    StartCommand,
-    StartPrompt,
-    EndPromptStartInput,
-    EndPromptStartInputEol,
-    EndInput,
-    EndCommand,
+    FreshLineAndStartPrompt { aid: Option<String>, cl: Option<FinalTermClick> },
+
+    MarkEndOfCommandWithFreshLine { aid: Option<String>, cl: Option<FinalTermClick> },
+    StartPrompt(FinalTermPromptKind),
+
+    MarkEndOfPromptAndStartOfInputUntilNextMarker,
+    MarkEndOfPromptAndStartOfInputUntilEndOfLine,
+
+    MarkEndOfInputAndStartOfOutput { aid: Option<String> },
+    CommandStatus { status: i32, aid: Option<String> },
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub enum FinalTermPromptKind {
+    #[default]
+    Initial,
+    RightSide,
+    Continuation,
+    Secondary,
+}
+
+impl FinalTermPromptKind {
+    // https://gitlab.freedesktop.org/Per_Bothner/specifications/blob/master/proposals/semantic-prompts.md
+    //
+    // The k (kind) option specifies the type of prompt:
+    // regular primary prompt (k=i or default),
+    // right-side prompts (k=r),
+    // or prompts for continuation lines (k=c or k=s).
+    fn try_from_str(s: &str) -> Option<Self> {
+        match s {
+            "i" => Some(Self::Initial),
+            "r" => Some(Self::RightSide),
+            "c" => Some(Self::Continuation),
+            "s" => Some(Self::Secondary),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FinalTermClick {
+    Line,
+    MultipleLine,
+    ConservativeVertical,
+    SmartVertical,
+}
+
+impl FinalTermClick {
+    fn try_from_str(s: &str) -> Option<Self> {
+        match s {
+            "line" => Some(Self::Line),
+            "m" => Some(Self::MultipleLine),
+            "v" => Some(Self::ConservativeVertical),
+            "w" => Some(Self::SmartVertical),
+            _ => None,
+        }
+    }
 }
 
 impl<'a, H, T> crate::Perform for Performer<'a, H, T>
@@ -1483,14 +1536,52 @@ where
                     return unhandled(params);
                 }
 
+                let mut aid = None;
+                let mut cl = None;
+                let mut kind = None;
+
+                for s in params.iter().skip(if params[0] == b"D" { 3 } else { 2 }) {
+                    if let Some(equal) = s.iter().position(|c| *c == b'=') {
+                        let key = &s[..equal];
+                        let value = &s[equal + 1..];
+                        match (str::from_utf8(key), str::from_utf8(value)) {
+                            (Ok("aid"), Ok(value)) => aid = Some(value.to_owned()),
+                            (Ok("cl"), Ok(value)) => cl = Some(value.to_owned()),
+                            (Ok("k"), Ok(value)) => kind = Some(value.to_owned()),
+                            _ => {},
+                        };
+                    } else if !s.is_empty() {
+                        return unhandled(params);
+                    }
+                }
+
                 let command = match params[1] {
-                    b"0" => Osc133Command::FreshLine,
-                    b"A" => Osc133Command::StartCommand,
-                    b"B" => Osc133Command::StartPrompt,
-                    b"C" => Osc133Command::EndPromptStartInput,
-                    b"D" => Osc133Command::EndPromptStartInputEol,
-                    b"E" => Osc133Command::EndInput,
-                    b"F" => Osc133Command::EndCommand,
+                    b"L" => Osc133Command::FreshLine,
+                    b"B" => Osc133Command::MarkEndOfPromptAndStartOfInputUntilNextMarker,
+                    b"I" => Osc133Command::MarkEndOfPromptAndStartOfInputUntilEndOfLine,
+                    b"A" => Osc133Command::FreshLineAndStartPrompt {
+                        aid,
+                        cl: cl.and_then(|s| FinalTermClick::try_from_str(&s)),
+                    },
+                    b"C" => Osc133Command::MarkEndOfInputAndStartOfOutput { aid },
+                    b"D" => {
+                        let status = match params.get(2).map(|&p| p) {
+                            Some(s) => match str::from_utf8(s) {
+                                Ok(s) => s.parse().unwrap_or(0),
+                                _ => 0,
+                            },
+                            _ => 0,
+                        };
+                        Osc133Command::CommandStatus { status, aid }
+                    },
+                    b"N" => Osc133Command::MarkEndOfCommandWithFreshLine {
+                        aid,
+                        cl: cl.and_then(|s| FinalTermClick::try_from_str(&s)),
+                    },
+                    b"P" => Osc133Command::StartPrompt(
+                        kind.and_then(|s| FinalTermPromptKind::try_from_str(&s))
+                            .unwrap_or_default(),
+                    ),
                     _ => return unhandled(params),
                 };
 
@@ -2051,30 +2142,16 @@ mod tests {
             self.reset_colors.push(index)
         }
 
-        /// Handle OSC133 commands.
         fn handle_osc133(&mut self, command: Osc133Command) {
             match command {
-                Osc133Command::FreshLine => {
-                    // Handle fresh line
-                }
-                Osc133Command::StartCommand => {
-                    // Handle start command
-                }
-                Osc133Command::StartPrompt => {
-                    // Handle start prompt
-                }
-                Osc133Command::EndPromptStartInput => {
-                    // Handle end prompt and start input
-                }
-                Osc133Command::EndPromptStartInputEol => {
-                    // Handle end prompt and start input at end of line
-                }
-                Osc133Command::EndInput => {
-                    // Handle end input
-                }
-                Osc133Command::EndCommand => {
-                    // Handle end command
-                }
+                Osc133Command::FreshLine => {},
+                Osc133Command::FreshLineAndStartPrompt { aid: _, cl: _ } => {},
+                Osc133Command::MarkEndOfCommandWithFreshLine { aid: _, cl: _ } => {},
+                Osc133Command::StartPrompt(_) => {},
+                Osc133Command::MarkEndOfPromptAndStartOfInputUntilNextMarker => {},
+                Osc133Command::MarkEndOfPromptAndStartOfInputUntilEndOfLine => {},
+                Osc133Command::MarkEndOfInputAndStartOfOutput { aid: _ } => {},
+                Osc133Command::CommandStatus { status: _, aid: _ } => {},
             }
         }
     }
