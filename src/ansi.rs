@@ -1555,6 +1555,11 @@ where
                     }
                 }
 
+                #[cfg(not(feature = "no_std"))]
+                {
+                    println!("{:?}", params);
+                }
+
                 let command = match params[1] {
                     b"L" => Osc133Command::FreshLine,
                     b"B" => Osc133Command::MarkEndOfPromptAndStartOfInputUntilNextMarker,
