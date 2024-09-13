@@ -24,8 +24,6 @@ use core::{iter, str};
 use core::ops::Mul;
 
 #[cfg(not(feature = "no_std"))]
-use std::collections::HashMap;
-#[cfg(not(feature = "no_std"))]
 use std::time::Instant;
 
 use cursor_icon::CursorIcon;
@@ -1540,10 +1538,12 @@ where
                 let mut cl = None;
                 let mut kind = None;
 
-                for s in params.iter().skip(if params[0] == b"D" { 3 } else { 2 }) {
+                let params_offset = if params[1] == b"D" { 3 } else { 2 };
+                for s in params.iter().skip(params_offset) {
                     if let Some(equal) = s.iter().position(|c| *c == b'=') {
                         let key = &s[..equal];
                         let value = &s[equal + 1..];
+
                         match (str::from_utf8(key), str::from_utf8(value)) {
                             (Ok("aid"), Ok(value)) => aid = Some(value.to_owned()),
                             (Ok("cl"), Ok(value)) => cl = Some(value.to_owned()),
@@ -1553,11 +1553,6 @@ where
                     } else if !s.is_empty() {
                         return unhandled(params);
                     }
-                }
-
-                #[cfg(not(feature = "no_std"))]
-                {
-                    println!("{:?}", params);
                 }
 
                 let command = match params[1] {
